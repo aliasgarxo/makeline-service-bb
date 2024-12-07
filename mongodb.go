@@ -124,24 +124,24 @@ func (r *MongoDBOrderRepo) InsertOrders(orders []Order) error {
 }
 
 func (r *MongoDBOrderRepo) UpdateOrder(order Order) error {
-	var ctx = context.TODO()
+	ctx := context.TODO()
 
-	filter := bson.D{{Key: "orderid", Value: bson.D{{Key: "$eq", Value: order.OrderID}}}}
+	filter := bson.D{{Key: "orderid", Value: order.OrderID}}
+	update := bson.D{
+		{Key: "$set", Value: bson.D{
+			{Key: "status", Value: order.Status},
+		}},
+	}
 
-	// Update the order
-	log.Printf("Updating order: %v", order)
-	updateResult, err := r.db.UpdateMany(
-		ctx,
-		filter,
-		bson.D{
-			{Key: "$set", Value: bson.D{{Key: "status", Value: order.Status}}},
-		},
-	)
+	log.Printf("Attempting to update order with filter: %+v and update: %+v", filter, update)
+
+	updateResult, err := r.db.UpdateOne(ctx, filter, update)
 	if err != nil {
-		log.Printf("Failed to update order: %s", err)
+		log.Printf("Failed to update order in MongoDB: %s", err)
 		return err
 	}
 
-	log.Printf("Matched %v documents and updated %v documents.\n", updateResult.MatchedCount, updateResult.ModifiedCount)
+	log.Printf("MongoDB update result: Matched=%d, Modified=%d", updateResult.MatchedCount, updateResult.ModifiedCount)
 	return nil
 }
+

@@ -66,7 +66,7 @@ func fetchOrders(c *gin.Context) {
 		return
 	}
 
-	// Get orders from the Azure Service Bus queue
+	// Fetch new orders from the queue
 	newOrders, err := getOrdersFromQueue()
 	if err != nil {
 		log.Printf("Failed to fetch orders from queue: %s", err)
@@ -74,7 +74,7 @@ func fetchOrders(c *gin.Context) {
 		return
 	}
 
-	// Set the status of each new order to "Pending" before inserting into MongoDB
+	// Set all new orders to "Pending"
 	for i := range newOrders {
 		newOrders[i].Status = Pending
 	}
@@ -88,20 +88,20 @@ func fetchOrders(c *gin.Context) {
 			return
 		}
 		log.Printf("Inserted %d new orders into the database", len(newOrders))
-	} else {
-		log.Printf("No new orders fetched from the queue")
 	}
 
-	// Return all orders that are still in "Pending" status
-	orders, err := client.repo.GetPendingOrders()
+	// Retrieve all pending orders
+	pendingOrders, err := client.repo.GetPendingOrders()
 	if err != nil {
 		log.Printf("Failed to get pending orders from database: %s", err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	c.IndentedJSON(http.StatusOK, orders)
+	log.Printf("Returning %d pending orders", len(pendingOrders))
+	c.IndentedJSON(http.StatusOK, pendingOrders)
 }
+
 
 
 // Gets a single order from database by order ID
@@ -133,6 +133,7 @@ func getOrder(c *gin.Context) {
 }
 
 // Updates the status of an order
+// Updates the status of an order
 func updateOrder(c *gin.Context) {
 	client, ok := c.MustGet("orderService").(*OrderService)
 	if !ok {
@@ -145,50 +146,45 @@ func updateOrder(c *gin.Context) {
 	var order Order
 	if err := c.BindJSON(&order); err != nil {
 		log.Printf("Failed to unmarshal order: %s", err)
-		c.AbortWithStatus(http.StatusBadRequest) // Changed to BadRequest since this is a client error
-		return
-	}
-
-	// Validate order ID and status
-	if order.OrderID == "" || order.Status != Complete {
-		log.Printf("Invalid order update request: OrderID='%s', Status='%v'", order.OrderID, order.Status)
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
 
-	// Update the order in MongoDB
-	err := client.repo.UpdateOrder(order)
-	if err != nil {
-		log.Printf("Failed to update order in MongoDB: %s", err)
-		c.AbortWithStatus(http.StatusInternalServerError)
+	// Validate order ID and status
+	if order.OrderID == "" {
+		log.Printf("Invalid order update request: Missing OrderID")
+		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
 
+	// Allow specific statuses for updates
+	if order.Status != Processing && order.Status != Complete {
+		log.Printf("Invalid order update request: Unsupported Status=%d", order.Status)
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize the order ID (if required)
 	id, err := strconv.Atoi(order.OrderID)
 	if err != nil {
 		log.Printf("Failed to convert order id to int: %s", err)
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
+	order.OrderID = strconv.Itoa(id)
 
-	sanitizedOrderId := strconv.FormatInt(int64(id), 10)
-
-	sanitizedOrder := Order{
-		OrderID:    sanitizedOrderId,
-		CustomerID: order.CustomerID,
-		Items:      order.Items,
-		Status:     order.Status,
-	}
-
-	err = client.repo.UpdateOrder(sanitizedOrder)
+	// Update the order in MongoDB
+	err = client.repo.UpdateOrder(order)
 	if err != nil {
-		log.Printf("Failed to update order status: %s", err)
+		log.Printf("Failed to update order in MongoDB: %s", err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("Order %s updated successfully", order.OrderID)
 	c.Status(http.StatusAccepted)
 }
+
 
 // Gets an environment variable or exits if it is not set
 func getEnvVar(varName string, fallbackVarNames ...string) string {
